@@ -1398,13 +1398,25 @@ const previewAttachment = (file) => {
   try {
     // 直接获取附件URL
     let url = ''
+    let fileName = ''
     
     if (typeof file === 'string') {
       // 如果file是字符串URL
       url = file
+      fileName = url.split('/').pop() || '附件'
     } else if (typeof file === 'object' && file !== null) {
-      // 如果file是对象，获取URL
+      // 如果file是对象，获取URL和名称
       url = file.url || file.file_url || file.path || file.file_path || file.attachment_url || file.screenshot || file.score_report || ''
+      
+      // 获取文件名
+      if (file.name) {
+        fileName = file.name
+      } else if (file.original_name) {
+        fileName = file.original_name
+      } else {
+        fileName = url.split('/').pop() || '附件'
+      }
+      
       if (!url) {
         console.error('附件对象没有有效的URL字段:', file)
         message.error('附件对象没有有效的URL字段')
@@ -1417,8 +1429,27 @@ const previewAttachment = (file) => {
       return
     }
     
-    // 所有文件都使用浏览器自带的预览功能，在新标签页中打开
-    window.open(url, '_blank')
+    // 确保URL是完整的，处理相对路径、绝对路径和Base64编码图片
+    let fullUrl = url
+    if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('data:')) {
+      // 如果是相对路径或绝对路径但缺少协议，添加当前域名
+      if (url.startsWith('/')) {
+        // 绝对路径，直接添加协议和域名
+        fullUrl = `${window.location.origin}${url}`
+      } else {
+        // 相对路径，添加base URL
+        fullUrl = `${window.location.origin}/${url.replace(/^\//, '')}`
+      }
+    }
+    
+    console.log(`预览附件: fileName=${fileName}, url=${url}, fullUrl=${fullUrl}`)
+    
+    // 使用Ant Design的Image组件或模态框预览图片，避免直接打开新标签页导致白屏
+    selectedAttachment.value = {
+      url: fullUrl,
+      name: fileName
+    }
+    previewModalVisible.value = true
   } catch (error) {
     console.error('预览附件失败:', error)
     message.error('预览附件失败，请稍后重试')
@@ -1490,16 +1521,37 @@ const getActionMenu = (record) => {
 // 检查是否为图片文件
 const isImageFile = (file) => {
   if (!file) return false
-  // 优先从URL中提取扩展名，因为name字段可能不包含扩展名
-  const url = file.url || ''
-  // 移除URL中的查询参数
-  const urlWithoutQuery = url.split('?')[0]
-  const name = file.name || urlWithoutQuery
-  const lowerName = name.toLowerCase()
+  
+  console.log('isImageFile检查的文件对象:', file)
+  
+  // 直接获取URL，支持多种属性名
+  const url = file.url || file.file_url || file.path || file.file_path || file.attachment_url || ''
+  console.log('获取到的URL:', url)
+  
+  // 如果URL为空，直接返回false
+  if (!url) {
+    console.log('URL为空，返回false')
+    return false
+  }
+  
+  // 移除URL中的查询参数和哈希值
+  const urlWithoutQuery = url.split('?')[0].split('#')[0]
+  console.log('移除查询参数后的URL:', urlWithoutQuery)
+  
+  // 直接检查URL是否以图片扩展名结尾，不依赖name属性
+  const lowerUrl = urlWithoutQuery.toLowerCase()
   const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg']
-  // 检查文件名或URL是否以图片扩展名结尾
-  const isImage = imageExtensions.some(ext => lowerName.endsWith(ext))
-  console.log(`检查文件是否为图片: name=${name}, url=${url}, urlWithoutQuery=${urlWithoutQuery}, isImage=${isImage}`)
+  
+  // 检查URL是否以图片扩展名结尾
+  const isImage = imageExtensions.some(ext => lowerUrl.endsWith(ext))
+  console.log(`检查URL是否以图片扩展名结尾: lowerUrl=${lowerUrl}, isImage=${isImage}`)
+  
+  // 额外检查：如果URL是Base64编码的图片，也应该识别为图片
+  if (!isImage && url.startsWith('data:image/')) {
+    console.log('URL是Base64编码的图片，返回true')
+    return true
+  }
+  
   return isImage
 }
 
@@ -1507,13 +1559,14 @@ const isImageFile = (file) => {
 const isImageAttachment = (attachment) => {
   if (typeof attachment === 'string') {
     // 如果是字符串URL，直接检查扩展名
-    return attachment.toLowerCase().endsWith('.jpg') || 
-           attachment.toLowerCase().endsWith('.jpeg') || 
-           attachment.toLowerCase().endsWith('.png') || 
-           attachment.toLowerCase().endsWith('.gif') || 
-           attachment.toLowerCase().endsWith('.bmp') || 
-           attachment.toLowerCase().endsWith('.webp') || 
-           attachment.toLowerCase().endsWith('.svg')
+    const url = attachment.toLowerCase()
+    return url.endsWith('.jpg') || 
+           url.endsWith('.jpeg') || 
+           url.endsWith('.png') || 
+           url.endsWith('.gif') || 
+           url.endsWith('.bmp') || 
+           url.endsWith('.webp') || 
+           url.endsWith('.svg')
   } else if (typeof attachment === 'object' && attachment !== null) {
     // 如果是对象，使用isImageFile函数检查
     return isImageFile(attachment)

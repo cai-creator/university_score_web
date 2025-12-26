@@ -242,12 +242,40 @@ const fetchScoreItems = async () => {
     const competitionScore = calculateCategoryScore(competitionProjects.value)
     const otherScore = calculateCategoryScore(otherProjects.value)
     
+    // 更新分数明细
+    scoreBreakdown.value = {
+      research: researchScore,
+      competition: competitionScore,
+      innovation: calculateCategoryScore(itemsWithDefaultScore.filter(item => 
+        ['innovation', 'innovation_project'].includes(item.type)
+      )),
+      internship: calculateCategoryScore(itemsWithDefaultScore.filter(item => 
+        ['internship', 'international_internship'].includes(item.type)
+      )),
+      military: calculateCategoryScore(itemsWithDefaultScore.filter(item => 
+        ['military', 'military_service'].includes(item.type)
+      )),
+      volunteer: calculateCategoryScore(itemsWithDefaultScore.filter(item => 
+        ['volunteer', 'volunteer_service'].includes(item.type)
+      )),
+      honor: calculateCategoryScore(itemsWithDefaultScore.filter(item => 
+        ['honor', 'honorary_title'].includes(item.type)
+      )),
+      socialWork: calculateCategoryScore(itemsWithDefaultScore.filter(item => 
+        ['social', 'social_work'].includes(item.type)
+      )),
+      sports: calculateCategoryScore(itemsWithDefaultScore.filter(item => 
+        ['sports', 'sports_competition'].includes(item.type)
+      ))
+    }
+    
     // 调试：打印获取到的加分项目和分数明细
     console.log('获取到的所有项目:', validItems)
     console.log('过滤后的项目:', itemsWithDefaultScore)
     console.log('科研成果项目:', researchProjects.value)
     console.log('学业竞赛项目:', competitionProjects.value)
     console.log('其他项目:', otherProjects.value)
+    console.log('分数明细:', scoreBreakdown.value)
     
   } catch (error) {
     console.error('获取加分项目失败:', error)

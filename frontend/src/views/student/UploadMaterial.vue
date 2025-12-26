@@ -805,11 +805,22 @@
               transform: `scale(${previewScale}) rotate(${previewRotation}deg)`
             }"
           >
-            <img :src="previewImageSrc" alt="预览" />
+            <img 
+              :src="previewImageSrc" 
+              alt="预览" 
+              @error="handleImagePreviewError" 
+              @load="handleImagePreviewLoad"
+            />
+            <div v-if="imagePreviewError" class="image-error">
+              <p>图片加载失败: {{ imagePreviewError }}</p>
+              <a-button type="primary" @click="downloadPreviewImage">
+                下载图片
+              </a-button>
+            </div>
           </div>
           
           <!-- 图片操作按钮 -->
-          <div class="preview-actions">
+          <div class="preview-actions" v-if="!imagePreviewError">
             <a-button @click="rotateImage(-90)">向左旋转</a-button>
             <a-button @click="zoomOut">缩小</a-button>
             <a-button @click="resetPreview">重置</a-button>
@@ -843,6 +854,7 @@ const previewFileName = ref('')
 const previewScale = ref(1)
 const previewRotation = ref(0)
 const previewModalWidth = ref(800)
+const imagePreviewError = ref('')
 
 // 保存所有创建的ObjectURL，用于清理
 const objectUrls = ref([])
@@ -1939,14 +1951,27 @@ const customUploadRequest = (options) => {
   }
 }
 
-// 打开预览模态框 - 使用浏览器自带的预览功能
+// 打开预览模态框 - 使用模态框预览图片，避免直接打开新标签页导致白屏
 const openPreviewModal = (file, index) => {
   try {
     let previewUrl = ''
     
     if (file.url) {
       // 已上传到服务器的文件，使用服务器URL
-      previewUrl = file.url
+      let url = file.url
+      // 确保URL是完整的，处理相对路径和绝对路径
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        // 如果是相对路径或绝对路径但缺少协议，添加当前域名
+        if (url.startsWith('/')) {
+          // 绝对路径，直接添加协议和域名
+          previewUrl = `${window.location.origin}${url}`
+        } else {
+          // 相对路径，添加base URL
+          previewUrl = `${window.location.origin}/${url.replace(/^\//, '')}`
+        }
+      } else {
+        previewUrl = url
+      }
     } else if (file.preview) {
       // 本地预览文件，使用生成的预览URL
       previewUrl = file.preview
@@ -1958,8 +1983,10 @@ const openPreviewModal = (file, index) => {
     }
     
     if (previewUrl) {
-      // 使用浏览器自带的预览功能，在新标签页中打开
-      window.open(previewUrl, '_blank')
+      // 使用模态框预览图片，避免直接打开新标签页导致白屏
+      previewImageSrc.value = previewUrl
+      previewFileName.value = file.name || `附件${index + 1}`
+      previewModalVisible.value = true
     } else {
       message.error('无法生成预览URL')
     }
@@ -1967,6 +1994,33 @@ const openPreviewModal = (file, index) => {
     console.error('预览文件失败:', error)
     message.error('预览文件失败')
   }
+}
+
+// 处理图片预览加载失败
+const handleImagePreviewError = (event) => {
+  console.error('图片预览加载失败:', event)
+  imagePreviewError.value = '图片加载失败，请尝试下载查看'
+}
+
+// 处理图片预览加载成功
+const handleImagePreviewLoad = () => {
+  imagePreviewError.value = ''
+}
+
+// 下载预览图片
+const downloadPreviewImage = () => {
+  if (!previewImageSrc.value) {
+    message.error('没有可下载的图片')
+    return
+  }
+  
+  // 创建下载链接
+  const link = document.createElement('a')
+  link.href = previewImageSrc.value
+  link.download = previewFileName.value
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
 }
 
 // 关闭预览模态框
@@ -1988,6 +2042,7 @@ const closePreviewModal = () => {
   previewFileName.value = ''
   previewScale.value = 1
   previewRotation.value = 0
+  imagePreviewError.value = ''
 }
 
 // 图片旋转

@@ -231,7 +231,7 @@ class BaseApplicationViewSet(viewsets.ViewSet, ABC):
                 "error": f"{self.get_view_name()}申请不存在"
             }, status=status.HTTP_404_NOT_FOUND)
         
-        if application.review_status not in ['pending', 'withdrawn']:
+        if application.review_status not in ['pending', 'withdrawn', 'rejected', 'first_rejected', 'second_rejected', 'third_rejected']:
             return Response({
                 "error": "当前状态的申请不可删除"
             }, status=status.HTTP_400_BAD_REQUEST)
@@ -522,7 +522,7 @@ class StudentApplicationViewSet(viewsets.ViewSet):
                 "error": "申请不存在"
             }, status=status.HTTP_404_NOT_FOUND)
 
-        if application.review_status not in ['pending', 'withdrawn']:
+        if application.review_status not in ['pending', 'withdrawn', 'rejected', 'first_rejected', 'second_rejected', 'third_rejected']:
             return Response({
                 "error": "当前状态的申请不可删除"
             }, status=status.HTTP_400_BAD_REQUEST)
