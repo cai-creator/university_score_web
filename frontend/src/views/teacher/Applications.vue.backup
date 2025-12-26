@@ -1,0 +1,1340 @@
+<template>
+  <div class="teacher-applications">
+    <h2>申请审批列表</h2>
+    
+    <!-- 筛选条件 -->
+    <div class="filter-section">
+      <a-row :gutter="[16, 16]">
+        <a-col :span="6">
+          <a-select v-model:value="filterForm.status" placeholder="申请状态">
+            <a-select-option value="">全部</a-select-option>
+            <a-select-option value="pending">等待审核</a-select-option>
+            <a-select-option value="first_reviewing">等待一审</a-select-option>
+            <a-select-option value="second_reviewing">等待二审</a-select-option>
+            <a-select-option value="third_reviewing">等待三审</a-select-option>
+            <a-select-option value="approved">审核通过</a-select-option>
+            <a-select-option value="rejected">未通过</a-select-option>
+            <a-select-option value="first_rejected">一审未通过</a-select-option>
+            <a-select-option value="second_rejected">二审未通过</a-select-option>
+            <a-select-option value="third_rejected">三审未通过</a-select-option>
+            <a-select-option value="withdrawn">已撤回</a-select-option>
+          </a-select>
+        </a-col>
+        <a-col :span="12">
+          <a-input v-model:value="filterForm.searchText" placeholder="搜索学生姓名或项目名称" @pressEnter="handleSearch" />
+        </a-col>
+        <a-col :span="6">
+          <a-button type="primary" @click="handleSearch">搜索</a-button>
+          <a-button style="margin-left: 8px" @click="handleReset">重置</a-button>
+        </a-col>
+      </a-row>
+    </div>
+
+    <!-- 项目类型分类筛选 -->
+    <div class="project-type-filter" style="margin: 16px 0;">
+      <h3 style="margin-bottom: 8px;">项目类型分类：</h3>
+      <div class="filter-tags">
+        <a-tag
+          v-for="type in projectTypes"
+          :key="type.value"
+          :color="filterForm.projectTypes.includes(type.value) ? 'blue' : 'default'"
+          @click="toggleProjectType(type.value)"
+          style="cursor: pointer; margin: 4px;"
+        >
+          {{ type.label }}
+        </a-tag>
+      </div>
+    </div>
+
+    <!-- 全局分页 - 已移除 -->
+    <!-- <div class="global-pagination" style="margin-bottom: 20px; text-align: right;">
+      <a-pagination
+        v-model:current="pagination.current"
+        v-model:page-size="pagination.pageSize"
+        :total="pagination.total"
+        show-size-changer
+        :page-size-options="['10', '20', '50']"
+        layout="total, sizes, prev, pager, next, jumper"
+        @change="onPaginationChange"
+        @showSizeChange="onPaginationChange"
+      />
+    </div> -->
+    
+    <!-- 申请列表 - 按项目类型分类 -->
+    <div class="applications-list" style="margin-top: 20px;">
+      <a-collapse v-model:activeKey="activeCategories" ghost>
+        <a-collapse-panel 
+          v-for="(apps, projectType) in applicationsByType" 
+          :key="projectType"
+          :header="`${getProjectTypeText(projectType)} (${apps.length})`"
+        >
+          <a-table
+            :columns="columns"
+            :data-source="apps"
+            :pagination="false"
+            :row-key="record => record.id"
+          >
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.key === 'status'">
+                <a-tag :color="getStatusColor(record.status)">
+                  {{ getStatusText(record.status) }}
+                </a-tag>
+              </template>
+              <template v-else-if="column.key === 'actions'">
+                <div class="action-buttons">
+                  <a-button type="link" @click="handleView(record)">查看</a-button>
+                  <a-button 
+                    v-if="record.status === 'approved' " 
+                    type="default" 
+                    @click="handleEdit(record)"
+                    style="margin-left: 8px;"
+                  >
+                    编辑
+                  </a-button>
+                </div>
+              </template>
+            </template>
+          </a-table>
+          
+          <!-- 如果该分类下没有申请 -->
+          <div v-if="apps.length === 0" class="no-data">
+            <a-empty description="该分类下暂无申请" />
+          </div>
+        </a-collapse-panel>
+      </a-collapse>
+      
+      <!-- 如果没有任何申请 -->
+      <a-card v-if="applications.length === 0 || Object.keys(applicationsByType).length === 0" style="margin-top: 20px;">
+        <a-empty description="暂无符合条件的申请" />
+      </a-card>
+    </div>
+
+    <!-- 申请详情模态框 -->
+    <a-modal
+      v-model:open="viewModalVisible"
+      title="申请详情"
+      :footer="[{ text: '拒绝', type: 'default', onClick: () => handleReject(selectedApplication) }, { text: '通过', type: 'primary', onClick: () => handleApprove(selectedApplication) }]"
+      width="1000px"
+    >
+      <div v-if="selectedApplication" class="application-detail">
+        <h3>{{ selectedApplication.name }}</h3>
+        <a-descriptions bordered :column="2">
+          <a-descriptions-item label="学生姓名">{{ selectedApplication.studentName }}</a-descriptions-item>
+          <a-descriptions-item label="申请状态"><a-tag :color="getStatusColor(selectedApplication.status)">{{ getStatusText(selectedApplication.status) }}</a-tag></a-descriptions-item>
+          <a-descriptions-item label="项目类型">{{ getProjectTypeText(selectedApplication.applicationCategoryName) }}</a-descriptions-item>
+          <a-descriptions-item label="申请时间">{{ selectedApplication.createdTime }}</a-descriptions-item>
+          <a-descriptions-item label="项目详情">{{ selectedApplication.description }}</a-descriptions-item>
+          <a-descriptions-item label="预计分数">{{ selectedApplication.estimatedScore }}分</a-descriptions-item>
+          <a-descriptions-item label="申请理由">{{ selectedApplication.reason }}</a-descriptions-item>
+          <a-descriptions-item label="备注">{{ selectedApplication.remark || '无' }}</a-descriptions-item>
+        </a-descriptions>
+
+        <!-- 证明材料 -->
+        <div class="proof-materials">
+          <h4>证明材料</h4>
+          <div class="material-list">
+            <div 
+              v-for="(material, index) in selectedApplication.proofMaterials" 
+              :key="index"
+              class="material-item"
+              @click="previewMaterial(material)"
+            >
+              <a-icon type="file-text" />
+              <span>{{ material.fileName }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 评审历史 -->
+        <div class="review-history" v-if="selectedApplication.reviewHistory && selectedApplication.reviewHistory.length > 0">
+          <h4>评审历史</h4>
+          <a-table
+            :columns="reviewHistoryColumns"
+            :data-source="selectedApplication.reviewHistory"
+            :pagination="false"
+            :row-key="record => record.id"
+          >
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.key === 'reviewType'">
+                <a-tag :color="record.reviewType === 'approve' ? 'green' : 'red'">
+                  {{ record.reviewType === 'approve' ? '通过' : '拒绝' }}
+                </a-tag>
+              </template>
+              <template v-if="column.key === 'score'">
+                {{ record.reviewType === 'approve' ? record.score + '分' : '0分' }}
+              </template>
+            </template>
+          </a-table>
+          <a-button 
+            v-if="!selectedApplication.reviewHistory && !loadingReviewHistory" 
+            type="primary" 
+            @click="loadReviewHistory">
+            加载评审历史
+          </a-button>
+        </div>
+      </div>
+    </a-modal>
+
+    <!-- 预览材料模态框 -->
+    <a-modal
+      v-model:visible="previewModalVisible"
+      :title="previewMaterialData.fileName"
+      :width="800"
+      ok-text="关闭"
+      @ok="previewModalVisible = false"
+    >
+      <!-- 文本文件预览 -->
+      <div v-if="previewMaterialData.fileType === 'text/plain'" class="text-preview">
+        <a-spin :spinning="loadingTextPreview.value">
+          <pre>{{ textPreviewContent.value }}</pre>
+        </a-spin>
+      </div>
+      <!-- 其他文件类型提示 -->
+      <div v-else class="other-file-preview">
+        <a-empty description="该文件类型不支持在线预览，请下载查看" />
+        <div style="margin-top: 16px; text-align: center;">
+          <a-button type="primary" @click="handleDownload(previewMaterial.url)">
+            下载文件
+          </a-button>
+        </div>
+      </div>
+    </a-modal>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted, watch } from 'vue'
+import { message } from 'ant-design-vue'
+import { useRoute } from 'vue-router'
+import api from '../../utils/api'
+
+// 申请列表数据获取失败问题修复：
+// 1. 修复了API调用逻辑，当status为"all"时不发送status参数，确保能获取所有状态的申请数据
+// 2. 修复了响应处理逻辑，能正确处理多种API响应格式
+// 3. 修复了数据去重逻辑，确保列表中只显示唯一的申请记录
+// 4. 修复了状态映射关系，确保所有后端状态都能正确映射到前端状态
+// 5. 修复了首页待审批数量与列表实际展示数据不一致的问题
+// 6. 修复了重复数据展示问题，确保列表数据唯一性和准确性
+
+// 从本地存储获取当前登录教师信息
+const user = JSON.parse(localStorage.getItem('user') || '{}')
+const currentTeacherId = user.id || null
+const currentTeacherName = user.name || '未知教师'
+
+// 路由
+const route = useRoute()
+
+// 状态管理
+const applications = ref([])
+const loading = ref(false)
+// 分页相关 - 已移除分页功能
+const pagination = ref({
+  current: 1,
+  pageSize: 10,
+  total: 0,
+  showSizeChanger: false,
+  pageSizeOptions: ['5', '10', '20', '50'],
+  showTotal: (total) => `共 ${total} 条记录`
+})
+// 项目类型列表
+const projectTypes = ref([
+  { label: '科研成果', value: '科研成果' },
+  { label: '学业竞赛', value: '学业竞赛' },
+  { label: '创新创业训练', value: '创新创业训练' },
+  { label: '国际组织实习', value: '国际组织实习' },
+  { label: '参军入伍', value: '参军入伍' },
+  { label: '参军入伍服兵役', value: '参军入伍服兵役' },
+  { label: '志愿服务', value: '志愿服务' },
+  { label: '荣誉称号', value: '荣誉称号' },
+  { label: '社会工作', value: '社会工作' },
+  { label: '体育比赛', value: '体育比赛' },
+  { label: '英语成绩', value: '英语成绩' }
+])
+
+const filterForm = ref({
+  status: '',
+  projectTypes: [], // 改为数组以支持多选
+  projectType: '', // 保留旧字段以确保兼容性
+  searchText: '',
+  studentName: ''
+})
+
+// 项目类型分类筛选功能
+const toggleProjectType = (type) => {
+  const index = filterForm.value.projectTypes.indexOf(type)
+  if (index === -1) {
+    // 如果类型不在筛选列表中，添加它
+    filterForm.value.projectTypes.push(type)
+  } else {
+    // 如果类型已在筛选列表中，移除它
+    filterForm.value.projectTypes.splice(index, 1)
+  }
+}
+
+// 监听路由参数变化
+watch(() => route.query.studentName, (newStudentName) => {
+  if (newStudentName) {
+    filterForm.value.studentName = newStudentName
+  }
+}, { immediate: true })
+
+// 模态框状态
+const viewModalVisible = ref(false)
+const rejectModalVisible = ref(false)
+const editModalVisible = ref(false)
+const approveScoreModalVisible = ref(false)
+const selectedApplication = ref(null)
+
+// 批准评分表单
+const approveScoreForm = ref({
+  comment: '',
+  finalScore: 0
+})
+
+// 计算分数结果
+const calculateScoreResult = ref(null)
+
+// 展开/收起状态管理
+const activeCategories = ref([])
+
+// 审核历史相关
+const reviewHistory = ref([])
+const loadingReviewHistory = ref(false)
+
+// 拒绝表单
+const rejectForm = ref({
+  reason: ''
+})
+
+// 编辑表单
+const editForm = ref({
+  comment: '',
+  finalScore: 0
+})
+
+// 表格列配置
+const columns = [
+  { title: '学生姓名', dataIndex: 'studentName', key: 'studentName' },
+  { title: '班级', dataIndex: 'class', key: 'class' },
+  { title: '项目类型', dataIndex: 'projectType', key: 'projectType', customCell: ({ text }) => ({ children: getProjectTypeText(text) }) },
+  { title: '项目名称', dataIndex: 'projectName', key: 'projectName' },
+  { title: '申请时间', dataIndex: 'applyTime', key: 'applyTime' },
+  { title: '预计加分', dataIndex: 'expectedScore', key: 'expectedScore', customCell: ({ text }) => ({ children: `${text}分` }) },
+  { title: '状态', dataIndex: 'status', key: 'status' },
+  { title: '操作', key: 'actions', fixed: 'right', width: 200 }
+]
+
+// 审核历史表格列配置
+const reviewHistoryColumns = [
+  { title: '审核人', dataIndex: 'reviewerName', key: 'reviewerName' },
+  { title: '审核结果', dataIndex: 'reviewType', key: 'reviewType' },
+  { title: '评分', dataIndex: 'score', key: 'score' },
+  { title: '审核意见', dataIndex: 'comment', key: 'comment' },
+  { title: '审核时间', dataIndex: 'reviewedAt', key: 'reviewedAt' }
+]
+
+// 按项目类型分组的筛选后申请列表
+const applicationsByType = computed(() => {
+  const filtered = applications.value.filter(app => {
+    let match = true
+    
+    // 注释：后端已根据教师权限过滤了数据，无需前端再次过滤
+    // 只显示分配给当前教师的申请 - 已注释，避免与后端权限过滤冲突
+    // if (app.assignedTeachers && !app.assignedTeachers.includes(currentTeacherId)) {
+    //   return false
+    // }
+    
+    // 状态匹配条件 - 当状态为空时，不过滤任何申请
+    if (filterForm.value.status && filterForm.value.status !== '') {
+      match = match && app.status === filterForm.value.status;
+    }
+    
+    if (filterForm.value.projectType) {
+      match = match && app.projectType === filterForm.value.projectType
+    }
+    
+    // 项目类型分类筛选 - 支持多选
+    if (filterForm.value.projectTypes && filterForm.value.projectTypes.length > 0) {
+      match = match && filterForm.value.projectTypes.includes(app.projectType)
+    }
+    
+    // 学生姓名筛选（来自路由参数或手动输入）
+    if (filterForm.value.studentName) {
+      match = match && app.studentName.toLowerCase().includes(filterForm.value.studentName.toLowerCase())
+    }
+    
+    if (filterForm.value.searchText) {
+      const searchText = filterForm.value.searchText.toLowerCase()
+      match = match && (app.studentName.toLowerCase().includes(searchText) || app.projectName.toLowerCase().includes(searchText))
+    }
+    
+    return match
+  })
+  
+  // 按项目类型分组
+  const grouped = {}
+  filtered.forEach(app => {
+    if (!grouped[app.projectType]) {
+      grouped[app.projectType] = []
+    }
+    grouped[app.projectType].push(app)
+  })
+  
+  return grouped
+})
+
+// 获取状态文本
+const getStatusText = (status) => {
+  const statusMap = {
+    pending: '未审核',
+    first_reviewing: '未审核',
+    second_reviewing: '未审核',
+    third_reviewing: '未审核',
+    approved: '已通过',
+    first_approved: '已通过',
+    second_approved: '已通过',
+    third_approved: '已通过',
+    rejected: '已拒绝',
+    first_rejected: '已拒绝',
+    second_rejected: '已拒绝',
+    third_rejected: '已拒绝',
+    withdrawn: '已撤回'
+  }
+  return statusMap[status] || status
+}
+
+// 获取状态颜色
+const getStatusColor = (status) => {
+  const colorMap = {
+    pending: '#108ee9',
+    first_reviewing: '#108ee9',
+    second_reviewing: '#108ee9',
+    third_reviewing: '#108ee9',
+    approved: '#52c41a',
+    first_approved: '#52c41a',
+    second_approved: '#52c41a',
+    third_approved: '#52c41a',
+    rejected: '#f5222d',
+    first_rejected: '#f5222d',
+    second_rejected: '#f5222d',
+    third_rejected: '#f5222d',
+    withdrawn: '#8c8c8c'
+  }
+  return colorMap[status] || '#108ee9'
+}
+
+// 获取项目类型文本
+const getProjectTypeText = (type) => {
+  const typeMap = {
+    // 数字类型映射
+    '1': '科研成果',
+    '2': '学业竞赛',
+    '3': '创新创业训练',
+    '4': '国际组织实习',
+    '5': '参军入伍',
+    '6': '志愿服务',
+    '7': '荣誉称号',
+    '8': '社会工作',
+    '9': '体育比赛',
+    // 字符串类型映射
+    'scientific': '科研成果',
+    'competition': '学业竞赛',
+    'innovation': '创新创业训练',
+    'international': '国际组织实习',
+    'military': '参军入伍',
+    'volunteer': '志愿服务',
+    'honor': '荣誉称号',
+    'social': '社会工作',
+    'sports': '体育比赛',
+    // 添加中文键到中文值的映射，确保类型显示一致
+    '科研成果': '科研成果',
+    '学业竞赛': '学业竞赛',
+    '创新创业训练': '创新创业训练',
+    '国际组织实习': '国际组织实习',
+    '参军入伍': '参军入伍',
+    '参军入伍服兵役': '参军入伍服兵役',
+    '志愿服务': '志愿服务',
+    '荣誉称号': '荣誉称号',
+    '社会工作': '社会工作',
+    '体育比赛': '体育比赛',
+    '英语成绩': '英语成绩'
+  }
+  return typeMap[type] || type
+}
+
+// 导入分数计算工具
+import { 
+  calculateResearchScore, 
+  calculateCompetitionScore, 
+  calculateInnovationScore,
+  calculateInternshipScore,
+  calculateMilitaryScore,
+  calculateVolunteerScore,
+  calculateHonorScore,
+  calculateSocialScore,
+  calculateSportsScore
+} from '../../utils/scoreCalculator.js'
+
+// ... 现有代码 ...
+
+// 计算推荐加分
+const calculateRecommendedScore = () => {
+  const app = selectedApplication.value
+  if (!app) return
+  
+  let score = 0
+  let reason = ''
+  
+  // 构建项目详情对象，适配scoreCalculator的接口
+  const projectDetails = {
+    description: app.description || '',
+    hours: app.hours || 0,
+    competitionLevel: 'national',
+    awardLevel: '',
+    competitionType: 'A',
+    innovationLevel: '',
+    innovationRole: '',
+    volunteerHours: parseInt(app.hours) || 0,
+    honorLevel: '',
+    socialPosition: ''
+  }
+  
+  // 从描述中提取关键信息
+  const descLower = app.description ? app.description.toLowerCase() : ''
+  
+  // 根据不同项目类型使用专业计算函数
+  switch (app.projectType) {
+    case '科研成果':
+    case 'scientific':
+      // 科研成果评分
+      let researchCategory = 'paper'
+      let level = 'C'
+      
+      if (descLower.includes('a类') || descLower.includes('a-type')) {
+        level = 'A'
+        reason += 'A类学术期刊/会议论文，'
+      } else if (descLower.includes('b类') || descLower.includes('b-type')) {
+        level = 'B'
+        reason += 'B类学术期刊/会议论文，'
+      } else if (descLower.includes('c类') || descLower.includes('c-type')) {
+        level = 'C'
+        reason += 'C类学术期刊/会议论文，'
+      } else if (descLower.includes('专利') || descLower.includes('patent')) {
+        researchCategory = 'patent'
+        reason += '国家发明专利，'
+      }
+      
+      // 考虑作者排名
+      let authorType = 'independent'
+      if (descLower.includes('第一作者') || descLower.includes('first author')) {
+        authorType = 'first'
+        reason += '第一作者，'
+      }
+      
+      score = calculateResearchScore(researchCategory, {
+        level,
+        type: 'national',
+        authorType
+      })
+      reason += `推荐加分${score}分`
+      break
+      
+    case '学业竞赛':
+    case 'competition':
+      // 学业竞赛评分
+      let competitionLevel = 'provincial'
+      let awardLevel = 'third'
+      let competitionType = 'A'
+      
+      if (descLower.includes('国家级') || descLower.includes('national')) {
+        competitionLevel = 'national'
+        reason += '国家级竞赛，'
+      } else if (descLower.includes('省级') || descLower.includes('provincial')) {
+        competitionLevel = 'provincial'
+        reason += '省级竞赛，'
+      }
+      
+      if (descLower.includes('a+') || descLower.includes('a type')) {
+        competitionType = 'A+'
+      } else if (descLower.includes('a-')) {
+        competitionType = 'A-'
+      }
+      
+      if (descLower.includes('一等奖') || descLower.includes('first')) {
+        awardLevel = 'first'
+        reason += '一等奖，'
+      } else if (descLower.includes('二等奖') || descLower.includes('second')) {
+        awardLevel = 'second'
+        reason += '二等奖，'
+      } else if (descLower.includes('三等奖') || descLower.includes('third')) {
+        awardLevel = 'third'
+        reason += '三等奖，'
+      }
+      
+      score = calculateCompetitionScore(competitionLevel, {
+        award: awardLevel,
+        type: competitionType,
+        teamSize: 'individual',
+        teamRole: 'member'
+      })
+      reason += `推荐加分${score.toFixed(2)}分`
+      break
+      
+    case '创新创业训练':
+    case 'innovation':
+      // 创新创业训练评分
+      let innovationLevel = 'school'
+      let innovationRole = 'member'
+      
+      if (descLower.includes('国家级') || descLower.includes('national')) {
+        innovationLevel = 'national'
+        reason += '国家级项目，'
+      } else if (descLower.includes('省级') || descLower.includes('provincial')) {
+        innovationLevel = 'provincial'
+        reason += '省级项目，'
+      } else if (descLower.includes('校级') || descLower.includes('school')) {
+        innovationLevel = 'school'
+        reason += '校级项目，'
+      }
+      
+      if (descLower.includes('组长') || descLower.includes('leader') || descLower.includes('captain')) {
+        innovationRole = 'leader'
+        reason += '担任组长，'
+      }
+      
+      score = calculateInnovationScore(innovationLevel, innovationRole)
+      reason += `推荐加分${score}分`
+      break
+      
+    case '国际组织实习':
+    case 'international':
+      // 国际组织实习评分
+      let duration = 'semester'
+      if (descLower.includes('一年') || descLower.includes('1 year') || descLower.includes('full year')) {
+        duration = 'year'
+        reason += '实习满一年，'
+      } else {
+        reason += '实习超过一学期但不满一年，'
+      }
+      
+      score = calculateInternshipScore(duration)
+      reason += `推荐加分${score}分`
+      break
+      
+    case '参军入伍':
+    case '参军入伍服兵役':
+    case 'military':
+      // 参军入伍评分
+      let militaryDuration = 'year'
+      if (descLower.includes('两年') || descLower.includes('2 years') || descLower.includes('more')) {
+        militaryDuration = 'more'
+        reason += '服役两年以上，'
+      } else {
+        reason += '服役一年以上，'
+      }
+      
+      score = calculateMilitaryScore(militaryDuration)
+      reason += `推荐加分${score}分`
+      break
+      
+    case '志愿服务':
+    case 'volunteer':
+      // 志愿服务评分
+      const volunteerHours = parseInt(app.hours) || 0
+      score = calculateVolunteerScore(volunteerHours, {})
+      reason = `累计志愿服务时间${volunteerHours}小时，推荐加分${score.toFixed(2)}分`
+      break
+      
+    case '荣誉称号':
+    case 'honor':
+      // 荣誉称号评分
+      let honorLevel = ''
+      if (descLower.includes('国家级') || descLower.includes('national')) {
+        honorLevel = 'national'
+        score = 2
+        reason = '国家级荣誉称号，推荐加分2分'
+      } else if (descLower.includes('省级') || descLower.includes('provincial')) {
+        honorLevel = 'provincial'
+        score = 1
+        reason = '省级荣誉称号，推荐加分1分'
+      } else if (descLower.includes('校级') || descLower.includes('school') || descLower.includes('university')) {
+        honorLevel = 'school'
+        score = 0.2
+        reason = '校级荣誉称号，推荐加分0.2分'
+      }
+      break
+      
+    case '社会工作':
+    case 'social':
+      // 社会工作评分
+      score = calculateSocialScore(projectDetails.socialPosition)
+      reason = '社会工作加分'
+      break
+      
+    case '体育比赛':
+    case 'sports':
+      // 体育比赛评分
+      score = calculateSportsScore('national', 'first', 'team')
+      reason = '体育比赛加分'
+      break
+      
+    default:
+      score = app.expectedScore || 0
+      reason = '根据学生申请的预计加分'
+  }
+  
+  // 确保分数不超过类别上限
+  if (['科研成果', 'scientific', '学业竞赛', 'competition', '创新创业训练', 'innovation'].includes(app.projectType)) {
+    // 学术专长类项目，上限15分
+    score = Math.min(15, score)
+  } else {
+    // 综合表现类项目，上限5分
+    score = Math.min(5, score)
+  }
+  
+  calculateScoreResult.value = {
+    score: score.toFixed(2),
+    reason
+  }
+  
+  // 自动填充推荐分数到表单
+  approveScoreForm.value.finalScore = parseFloat(score.toFixed(2))
+}
+
+// 搜索
+const handleSearch = () => {
+  // 搜索时重置到第一页
+  pagination.value.current = 1;
+  fetchApplications()
+  message.info('搜索功能已触发')
+}
+
+// 分页变化处理 - 已移除分页功能，此方法保留但不执行任何操作
+const onPaginationChange = (paginationInfo) => {
+  console.log('分页变化:', paginationInfo);
+  // 不执行任何操作
+}
+
+// 重置筛选条件
+const handleReset = () => {
+  filterForm.value = {
+    status: '',
+    projectType: '',
+    searchText: '',
+    studentName: ''
+  }
+}
+
+// 查看申请详情
+const handleView = (record) => {
+  selectedApplication.value = record
+  viewModalVisible.value = true
+  // 加载审核历史
+  fetchReviewHistory(record.id)
+}
+
+// 渲染详情模态框的底部按钮
+const renderModalFooter = () => {
+  if (!selectedApplication.value) return null
+  
+  // 只有未审核的申请才能进行操作
+  if (selectedApplication.value.status === 'pending') {
+    return [
+      {
+        type: 'default',
+        text: '拒绝',
+        onClick: () => handleReject(selectedApplication.value)
+      },
+      {
+        type: 'primary',
+        text: '通过',
+        onClick: () => handleApprove(selectedApplication.value)
+      }
+    ]
+  }
+  
+  return [
+    {
+      type: 'primary',
+      text: '关闭',
+      onClick: () => viewModalVisible.value = false
+    }
+  ]
+}
+
+// 通过申请 - 打开评分模态框
+const handleApprove = (record) => {
+  if (!record) return
+  
+  // 检查申请状态，只有未审核的申请才能批准
+  if (record.status !== 'pending') {
+    message.warning('只有未审核的申请才能进行批准操作')
+    return
+  }
+  
+  selectedApplication.value = record
+  // 初始化表单，设置预计分数
+  approveScoreForm.value = {
+    comment: '',
+    finalScore: record.expectedScore || 0
+  }
+  calculateScoreResult.value = null
+  approveScoreModalVisible.value = true
+}
+
+// 确认批准并评分
+const handleConfirmApproveScore = async () => {
+  if (!selectedApplication.value) return
+  
+  // 再次检查申请状态，确保在操作过程中状态没有改变
+  if (selectedApplication.value.status !== 'pending') {
+    message.warning('该申请状态已改变，无法进行批准操作')
+    approveScoreModalVisible.value = false
+    return
+  }
+  
+  if (approveScoreForm.value.finalScore === undefined || approveScoreForm.value.finalScore === null) {
+    message.error('请输入最终加分')
+    return
+  }
+  
+  try {
+    await api.teacher.approveApplication(selectedApplication.value.id, {
+      comment: approveScoreForm.value.comment,
+      score: approveScoreForm.value.finalScore
+    })
+    // 更新本地数据
+    selectedApplication.value.status = 'approved'
+    selectedApplication.value.expectedScore = approveScoreForm.value.finalScore
+    message.success('申请已批准并完成评分')
+    // 重新获取申请列表以确保数据最新
+    fetchApplications()
+    approveScoreModalVisible.value = false
+    resetApproveScoreForm()
+  } catch (error) {
+    message.error('操作失败：' + (error.message || '未知错误'))
+  }
+}
+
+// 拒绝申请
+const handleReject = (record) => {
+  if (!record) return
+  
+  // 检查申请状态，只有未审核的申请才能拒绝
+  if (record.status !== 'pending') {
+    message.warning('只有未审核的申请才能进行拒绝操作')
+    return
+  }
+  
+  selectedApplication.value = record
+  rejectModalVisible.value = true
+}
+
+// 确认拒绝
+const handleConfirmReject = async () => {
+  if (!selectedApplication.value) return
+  
+  // 再次检查申请状态，确保在操作过程中状态没有改变
+  if (selectedApplication.value.status !== 'pending') {
+    message.warning('该申请状态已改变，无法进行拒绝操作')
+    rejectModalVisible.value = false
+    return
+  }
+  
+  if (!rejectForm.value.reason) {
+    message.error('请输入拒绝理由')
+    return
+  }
+
+  try {
+    await api.teacher.rejectApplication(selectedApplication.value.id, { reason: rejectForm.value.reason })
+    // 更新本地数据
+    selectedApplication.value.status = 'rejected'
+    selectedApplication.value.finalScore = 0
+    message.success('申请已拒绝')
+    // 重新获取申请列表以确保数据最新
+    fetchApplications()
+    rejectModalVisible.value = false
+    resetRejectForm()
+  } catch (error) {
+    message.error('操作失败：' + (error.message || '未知错误'))
+  }
+}
+
+// 重置拒绝表单
+const resetRejectForm = () => {
+  rejectForm.value = {
+    reason: ''
+  }
+}
+
+// 重置批准评分表单
+const resetApproveScoreForm = () => {
+  approveScoreForm.value = {
+    comment: '',
+    finalScore: 0
+  }
+  calculateScoreResult.value = null
+}
+
+// 编辑申请
+const handleEdit = (record) => {
+  if (!record) return
+  
+  // 检查申请状态，只有未审核的申请才能编辑
+  if (record.status !== 'pending') {
+    message.warning('只有未审核的申请才能进行编辑操作')
+    return
+  }
+  
+  selectedApplication.value = record
+  editForm.value = {
+    comment: record.comment || '',
+    finalScore: record.expectedScore
+  }
+  editModalVisible.value = true
+}
+
+// 确认编辑
+const handleConfirmEdit = async () => {
+  if (!selectedApplication.value) return
+  
+  // 再次检查申请状态，确保在操作过程中状态没有改变
+  if (selectedApplication.value.status !== 'pending') {
+    message.warning('该申请状态已改变，无法进行编辑操作')
+    editModalVisible.value = false
+    return
+  }
+  
+  if (editForm.value.finalScore === undefined || editForm.value.finalScore === null) {
+    message.error('请输入最终加分')
+    return
+  }
+  
+  try {
+    await api.teacher.updateApplication(selectedApplication.value.id, {
+      comment: editForm.value.comment,
+      finalScore: editForm.value.finalScore
+    })
+    // 更新本地数据
+    selectedApplication.value.comment = editForm.value.comment
+    selectedApplication.value.expectedScore = editForm.value.finalScore
+    
+    editModalVisible.value = false
+    resetEditForm()
+    message.success('申请已更新')
+    // 重新获取申请列表以确保数据最新
+    fetchApplications()
+  } catch (error) {
+    message.error('操作失败：' + (error.message || '未知错误'))
+  }
+}
+
+// 重置编辑表单
+const resetEditForm = () => {
+  editForm.value = {
+    comment: '',
+    finalScore: 0
+  }
+}
+
+// 材料预览相关
+const previewModalVisible = ref(false)
+const previewMaterial = ref({ name: '', url: '' })
+
+// 判断是否为图片文件
+const isImage = (fileName) => {
+  const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg', '.webp']
+  const extension = fileName.toLowerCase().substring(fileName.lastIndexOf('.'))
+  return imageExtensions.includes(extension)
+}
+
+// 判断是否为PDF文件
+const isPDF = (fileName) => {
+  return fileName.toLowerCase().endsWith('.pdf')
+}
+
+// 判断是否为文本文件
+const isText = (fileName) => {
+  const textExtensions = ['.txt', '.md', '.csv', '.json', '.xml', '.html', '.htm', '.css', '.js', '.java', '.py', '.cpp', '.c', '.h', '.hpp', '.php', '.rb', '.go', '.swift', '.kt']
+  const extension = fileName.toLowerCase().substring(fileName.lastIndexOf('.'))
+  return textExtensions.includes(extension)
+}
+
+// 判断是否为Office文档
+const isOfficeDocument = (fileName) => {
+  const officeExtensions = ['.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx']
+  const extension = fileName.toLowerCase().substring(fileName.lastIndexOf('.'))
+  return officeExtensions.includes(extension)
+}
+
+// 文本预览相关
+const loadingTextPreview = ref(false)
+const textPreviewContent = ref('')
+
+// 预览材料
+const handlePreview = async (material) => {
+  previewMaterial.value = material
+  
+  // 如果是文本文件，尝试加载文件内容
+  if (isText(material.name)) {
+    loadingTextPreview.value = true
+    textPreviewContent.value = ''
+    try {
+      const response = await fetch(material.url)
+      if (response.ok) {
+        textPreviewContent.value = await response.text()
+      } else {
+        textPreviewContent.value = '无法加载文件内容，请下载查看'
+      }
+    } catch (error) {
+      textPreviewContent.value = '加载文件内容失败，请下载查看'
+    } finally {
+      loadingTextPreview.value = false
+    }
+  }
+  
+  previewModalVisible.value = true
+}
+
+// 下载材料
+const handleDownload = (url) => {
+  // 这里可以添加文件下载逻辑
+  message.info('下载功能已触发')
+}
+
+// 获取审核历史
+  const fetchReviewHistory = async (id) => {
+    if (!id) return;
+    
+    loadingReviewHistory.value = true;
+    try {
+      const response = await api.teacher.getApplicationReviewHistory(id);
+      
+      // 处理多种可能的响应格式
+      let reviewHistoryData = [];
+      
+      if (response && Array.isArray(response)) {
+        // 直接返回数组格式
+        reviewHistoryData = response;
+      } else if (response && Array.isArray(response.results)) {
+        // 分页格式
+        reviewHistoryData = response.results;
+      } else if (response && Array.isArray(response.data)) {
+        // 包含data字段
+        reviewHistoryData = response.data;
+      } else if (response && response.errorcode === true) {
+        // 处理后端错误
+        console.error('获取审核历史失败:', response.error);
+        message.error(`获取审核历史失败：${response.error}`);
+        return;
+      }
+      
+      // 更新全局reviewHistory和选中申请的reviewHistory
+      reviewHistory.value = reviewHistoryData;
+      if (selectedApplication.value) {
+        selectedApplication.value.reviewHistory = reviewHistoryData;
+      }
+      
+      // 如果没有审核记录，显示友好提示
+      if (reviewHistoryData.length === 0) {
+        message.info('暂无审核记录');
+      }
+    } catch (error) {
+      console.error('获取审核历史失败:', error);
+      
+      // 处理不同类型的错误
+      if (error.response?.status === 404) {
+        // 如果是404，设置为空列表并显示友好提示
+        const emptyHistory = [];
+        reviewHistory.value = emptyHistory;
+        if (selectedApplication.value) {
+          selectedApplication.value.reviewHistory = emptyHistory;
+        }
+        message.info('暂无审核记录');
+      } else {
+        // 其他错误显示失败信息
+        message.error('获取审核历史失败: ' + (error.message || '未知错误'));
+      }
+    } finally {
+      loadingReviewHistory.value = false;
+    }
+  }
+
+// 获取申请列表
+const fetchApplications = async () => {
+    try {
+      loading.value = true
+      console.log('=== fetchApplications 开始执行 ===');
+      console.log('当前 filterForm.value:', JSON.stringify(filterForm.value));
+      
+      // 构建查询参数
+      const params = {};
+      // 仅当选择了具体状态时才发送status参数，否则获取所有状态
+      if (filterForm.value.status) {
+        params.status = filterForm.value.status;
+      }
+      // 处理项目类型筛选，支持多选
+      if (filterForm.value.projectTypes && filterForm.value.projectTypes.length > 0) {
+        // 后端目前只支持单个项目类型筛选，这里取第一个选中的类型
+        params.projectType = filterForm.value.projectTypes[0];
+      } else if (filterForm.value.projectType) {
+        // 兼容旧的单个项目类型筛选
+        params.projectType = filterForm.value.projectType;
+      }
+      if (filterForm.value.searchText && filterForm.value.searchText.trim()) {
+        params.search = filterForm.value.searchText.trim();
+      }
+      // 移除分页参数，一次性获取所有数据
+      
+      console.log('即将请求申请列表，参数:', params);
+      console.log('调用API前filterForm.value:', filterForm.value);
+      const response = await api.teacher.getApplications(params)
+      console.log('API调用完成，响应:', response);
+      
+      console.log('申请列表API响应:', response);
+      
+      // 然后检查响应是否有效
+      if (!response) {
+        console.error('API返回空响应');
+        applications.value = [];
+        message.error('获取申请列表失败：服务器未返回数据');
+        return;
+      }
+      
+      // 打印更详细的响应信息
+      console.log('响应类型:', typeof response);
+      console.log('响应包含results字段:', 'results' in response);
+      console.log('响应包含count字段:', 'count' in response);
+      console.log('响应包含data字段:', 'data' in response);
+      console.log('响应包含applications字段:', 'applications' in response);
+      console.log('响应本身是数组:', Array.isArray(response));
+      
+      // 根据后端返回的数据格式正确处理数据
+      let rawApplications = [];
+      
+      // 适配多种可能的返回格式 - 现在获取所有数据，不再处理分页
+      if (Array.isArray(response)) {
+        // 直接返回数组的情况
+        rawApplications = response;
+      } else if (response.data && Array.isArray(response.data)) {
+        // 包含data数组的响应格式
+        rawApplications = response.data;
+      } else if (response.data && response.data.results && Array.isArray(response.data.results)) {
+        // 包含data.results数组的响应格式
+        rawApplications = response.data.results;
+      } else if (response.applications && Array.isArray(response.applications)) {
+        // 包含applications数组的响应格式
+        rawApplications = response.applications;
+      } else if (response.results && Array.isArray(response.results)) {
+        // 包含results数组的响应格式（后端分页接口格式）
+        rawApplications = response.results;
+      } else if (response.success === false && response.error) {
+        // 处理后端返回的错误信息
+        console.error('API返回错误:', response.error);
+        applications.value = [];
+        message.error(`获取申请列表失败：${response.error}`);
+        return;
+      } else {
+        console.error('API返回的数据格式错误，期望数组或包含data/applications/results字段的对象，但得到:', response);
+        applications.value = [];
+        message.error('获取申请列表失败：返回数据格式不正确');
+        return;
+      }
+      
+      // 去重：使用Map确保每个申请ID只出现一次
+      const uniqueApplications = [];
+      const applicationMap = new Map();
+      
+      rawApplications.forEach(app => {
+        if (app && app.id) {
+          applicationMap.set(app.id, app);
+        }
+      });
+      
+      // 将去重后的数据转换为数组
+      applicationMap.forEach(app => {
+        uniqueApplications.push(app);
+      });
+      
+      // 更新总记录数（使用去重后的数量）
+      pagination.value.total = uniqueApplications.length;
+      
+      // 后端状态到前端状态的映射
+      const backendToFrontendStatusMap = {
+        'pending': 'pending',
+        'first_reviewing': 'pending',
+        'second_reviewing': 'pending',
+        'third_reviewing': 'pending',
+        'approved': 'approved',
+        'first_approved': 'approved',
+        'second_approved': 'approved',
+        'third_approved': 'approved',
+        'final_approved': 'approved',
+        'rejected': 'rejected',
+        'first_rejected': 'rejected',
+        'second_rejected': 'rejected',
+        'third_rejected': 'rejected',
+        'final_rejected': 'rejected',
+        'withdrawn': 'withdrawn'
+      };
+
+      // 数据字段映射，确保前端组件能正确识别所有字段
+      const mappedApplications = uniqueApplications.map(app => ({
+        id: app.id || app.application_id || '',
+        studentName: app.student_name || app.studentName || app.user?.name || '未知学生',
+        class: app.class_name || app.className || app.class || '未分配',
+        projectType: app.project_type || app.projectType || app.application_type || '',
+        projectName: app.project_name || app.projectName || app.title || '',
+        applyTime: app.apply_time || app.appliedAt || app.created_at || '',
+        expectedScore: parseFloat(app.expected_score || app.score || app.appliedScore || 0),
+        status: backendToFrontendStatusMap[app.status] || backendToFrontendStatusMap[app.review_status] || app.status || app.review_status || 'pending',
+        description: app.description || '',
+        proofMaterials: app.materials || app.proof_materials || [],
+        assignedTeachers: app.assigned_teachers || app.assignedTeachers || [],
+        studentId: app.student_id || app.studentId || app.user?.school_id || '',
+        ...app // 保留原始字段以确保兼容性
+      }));
+      
+      // 过滤掉学生撤回的申请
+      const filteredApplications = mappedApplications.filter(app => app.status !== 'withdrawn');
+      
+      console.log('原始API返回数据:', rawApplications);
+      console.log('去重后的应用数据:', uniqueApplications);
+      console.log('处理后的映射数据:', mappedApplications);
+      console.log('过滤后的申请数据:', filteredApplications);
+      applications.value = filteredApplications;
+      
+      console.log('applications.value内容:', applications.value);
+      console.log('applications.value长度:', applications.value.length);
+      
+      // 如果没有数据，显示提示信息
+      if (mappedApplications.length === 0) {
+        message.info('暂无申请数据');
+      }
+    } catch (error) {
+      console.error('获取申请列表错误详情:', error);
+      console.error('错误响应:', error.response);
+      
+      let errorMessage = '获取申请列表失败';
+      
+      // 区分不同类型的错误并提供更具体的错误信息
+      if (error.response) {
+        // 服务器返回了错误状态码
+        const status = error.response.status;
+        
+        switch (status) {
+          case 401:
+            errorMessage = '获取申请列表失败：请重新登录';
+            break;
+          case 403:
+            errorMessage = '获取申请列表失败：权限不足';
+            break;
+          case 404:
+            errorMessage = '获取申请列表失败：请求的资源不存在';
+            break;
+          case 408:
+            errorMessage = '获取申请列表失败：请求超时，请稍后重试';
+            break;
+          case 500:
+            errorMessage = '获取申请列表失败：服务器内部错误';
+            break;
+          case 502:
+            errorMessage = '获取申请列表失败：网关错误';
+            break;
+          case 503:
+            errorMessage = '获取申请列表失败：服务不可用，请稍后重试';
+            break;
+          default:
+            errorMessage += `: 状态码 ${status}`;
+        }
+        
+        // 添加服务器返回的错误消息（如果有）
+        if (error.response.data?.message) {
+          errorMessage += ` - ${error.response.data.message}`;
+        } else if (error.response.data?.detail) {
+          errorMessage += ` - ${error.response.data.detail}`;
+        } else if (error.response.data?.error) {
+          errorMessage += ` - ${error.response.data.error}`;
+        }
+      } else if (error.request) {
+        // 请求已发出但没有收到响应
+        errorMessage = '获取申请列表失败：网络连接失败，请检查网络';
+      } else if (error.message) {
+        // 其他错误
+        errorMessage += `: ${error.message}`;
+        // 处理特定的错误消息
+        if (error.message.includes('timeout')) {
+          errorMessage = '获取申请列表失败：请求超时，请检查网络连接';
+        } else if (error.message.includes('Network Error')) {
+          errorMessage = '获取申请列表失败：网络错误，请检查网络连接';
+        }
+      } else {
+        errorMessage += ': 未知错误';
+      }
+      
+      message.error(errorMessage);
+      // 发生错误时确保applications是数组
+      applications.value = [];
+    } finally {
+      loading.value = false;
+    }
+  }
+
+onMounted(() => {
+  console.log('Applications组件挂载，开始获取申请列表数据');
+  fetchApplications();
+})
+</script>
+
+<style scoped>
+.teacher-applications {
+  padding: 20px;
+}
+
+.filter-section {
+  margin-bottom: 20px;
+}
+
+.action-buttons {
+  display: flex;
+  align-items: center;
+}
+
+.application-detail {
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+.proof-materials {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.material-item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.preview-content {
+  padding: 16px;
+}
+
+.image-preview {
+  max-width: 100%;
+  max-height: 600px;
+  object-fit: contain;
+}
+
+.pdf-preview {
+  width: 100%;
+  height: 600px;
+}
+
+.other-file-preview {
+  padding: 40px;
+  text-align: center;
+}
+</style>
